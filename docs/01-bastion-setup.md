@@ -131,3 +131,4 @@ ssh ubuntu@<프라이빗IP>
 ```bash
 curl ifconfig.me
 ```
+또는 naver.com 에서 내 ip 검색
