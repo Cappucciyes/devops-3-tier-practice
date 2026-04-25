@@ -58,7 +58,9 @@ devops-3-tier-practice/
 
 ## 실습 순서
 
-1. VPC 구축 (별도 완료)
+본 Repo의 docs 참고
+
+1. VPC 구축
 2. Bastion 구축 (pub-svc)
 3. Backend EC2 2대 구축 (pri-svc)
 4. RDS MySQL 구축 (pri-db)
