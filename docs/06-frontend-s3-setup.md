@@ -53,12 +53,6 @@ S3 버킷 상세 → Upload → Add files
 - `app.js`
 - `style.css`
 
-또는 AWS CLI:
-
-```bash
-aws s3 sync ./frontend/ s3://guestbook-frontend-hojun121/
-```
-
 ## Step 4. (임시) 정적 웹사이트 호스팅 활성화
 
 ⚠️ 이건 **임시 테스트용**. 최종 배포에서는 CloudFront만 사용.
@@ -115,20 +109,6 @@ http://guestbook-frontend-hojun121.s3-website.ap-northeast-2.amazonaws.com
 - 상단에 "응답한 서버: ip-xxx" 표시
 - 메시지 작성/조회/삭제 가능
 - 5초마다 자동 새로고침
-
-## Step 7. CORS 이슈 확인
-
-⚠️ **중요**: S3(HTTP) → ALB(HTTP) 호출 시 CORS 이슈 없음.
-단, 혼합 콘텐츠나 도메인 다름 주의.
-
-Backend 코드에 `cors()` 미들웨어가 이미 포함되어 있어 모든 Origin 허용.
-
-실무에선 특정 도메인만 허용해야 함:
-```javascript
-app.use(cors({
-  origin: 'https://www.example.com'
-}));
-```
 
 ## 체크리스트
 
