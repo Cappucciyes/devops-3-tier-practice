@@ -2,10 +2,7 @@ name: Backend Deploy
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend-deploy.yml'
+    branches: [backend-cicd]
   workflow_dispatch:
 
 permissions:
@@ -30,9 +27,16 @@ jobs:
 
       - name: Package backend
         run: |
-          cd backend
-          zip -r ../${{ env.ARTIFACT_KEY }} . \
-            -x "node_modules/*" ".env" "*.log"
+          zip -r ${{ env.ARTIFACT_KEY }} . \
+            -x "frontend/*" \
+            -x "docs/*" \
+            -x ".github/*" \
+            -x ".git/*" \
+            -x "node_modules/*" \
+            -x ".env" \
+            -x "*.log" \
+            -x "README.md" \
+            -x ".gitignore"
 
       - name: Upload artifact to S3
         run: |
