@@ -380,7 +380,7 @@ CI/CD 구동을 위해 IAM Role 3개와 OIDC Provider 1개가 필요하다.
 > ⚠️ 'CodeDeploy - ECS' 또는 'CodeDeploy - Lambda'가 아닌 'CodeDeploy'를 선택한다.
 
 **Next** 클릭. Permissions에 `AWSCodeDeployRole`이 자동 첨부된다. 
-AmazonEC2FullAccess 도 추가.
+AmazonEC2FullAccess, AutoScalingFullAccess 도 추가.
 그대로 **Next**.
 
 **Step 3: Name**
