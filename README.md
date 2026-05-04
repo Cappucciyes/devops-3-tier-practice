@@ -560,7 +560,7 @@ EC2 콘솔 > 좌측 **Launch Templates** > **Create launch template**
 
 **Instance type**: `t3.micro`
 
-**Key pair (login)**: "Don't include in launch template" (SSM Session Manager로 접속)
+**Key pair (login)**: Bastion 생성했때 활용한 Key 지정
 
 **Network settings**
 - Subnet: **Don't include in launch template** (ASG에서 지정)
