@@ -698,14 +698,14 @@ EC2 > Target Groups > `backend-tg` > **Targets** 탭에서 인스턴스 2개가 
 **Deployment configuration**
 - Configuration: `CodeDeployDefault.AllAtOnce`
 
-**Load balancer**
-- Type: **Application Load Balancer**
-- Choose target groups: `backend-tg`
-
 **Deployment settings**
 - Traffic rerouting: **Reroute traffic immediately**
 - Original instances: **Terminate the original instances in the Auto Scaling group**
 - Wait time: `0` days `0` hours `5` minutes
+
+**Load balancer**
+- Type: **Application Load Balancer**
+- Choose target groups: `backend-tg`
 
 **Advanced** (펼쳐서 설정)
 - Rollbacks: **Roll back when a deployment fails** 체크
@@ -757,7 +757,8 @@ sudo apt update
 sudo apt install -y mysql-client
 
 # init.sql 적용
-mysql -h <RDS_엔드포인트> -u admin -p guestbook < /home/ubuntu/backend/init.sql
+cd /home/ubuntu/devops-3-tier-practice
+mysql -h <RDS_엔드포인트> -u admin -p < init.sql
 # DB 비밀번호 입력
 
 # 적용 확인
