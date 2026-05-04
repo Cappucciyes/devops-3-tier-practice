@@ -556,8 +556,7 @@ EC2 콘솔 > 좌측 **Launch Templates** > **Create launch template**
 | Template version description | `Initial version` (선택) |
 
 **Application and OS Images**
-- **Browse more AMIs** 클릭
-- 사전에 메모한 Ubuntu 22.04 AMI ID 검색하여 선택
+- Ubuntu Server 26.04 LTS 선택
 
 **Instance type**: `t3.micro`
 
