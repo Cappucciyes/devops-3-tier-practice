@@ -1,0 +1,44 @@
+name: Deploy Frontend to S3 + CloudFront
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC 토큰 발급용
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  S3_BUCKET: your-bucket-name              # ← 변경
+  CLOUDFRONT_DISTRIBUTION_ID: EXXXXXXXXXXX # ← 변경
+  AWS_ROLE_ARN: arn:aws:iam::123456789012:role/github-actions-frontend-deploy  # ← 변경
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync . s3://${{ env.S3_BUCKET }} \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "README.md" \
+            --exclude ".gitignore"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
