@@ -208,8 +208,7 @@ NAT Gateway는 두 가지 배포 방식 중 선택할 수 있습니다.
 | `rt-public` | pub-elb-a, pub-elb-c, pub-nat-a, pub-nat-c, pub-svc-a, pub-svc-c | **IGW** (`my-igw`) |
 | `rt-private-a` | pri-elb-a, pri-svc-a, pri-mgmt-a | **NAT GW** (`nat-a`) |
 | `rt-private-c` | pri-elb-c, pri-svc-c, pri-mgmt-c | **NAT GW** (`nat-c`) |
-| `rt-db-a` | pri-db-a | **None** |
-| `rt-db-c` | pri-db-c | **None** |
+| `rt-db` | pri-db-a, pri-db-c | **None** |
 
 > Private 라우팅 테이블을 AZ별로 분리하는 이유: **같은 AZ의 NAT을 사용**해야 cross-AZ 데이터 전송 비용을 막고 장애 격리가 가능
 
@@ -231,8 +230,7 @@ NAT Gateway는 두 가지 배포 방식 중 선택할 수 있습니다.
 | pub-* | igw-xxxx |
 | pri-*-a | nat-xxxx (nat-a) |
 | pri-*-c | nat-xxxx (nat-c) |
-| pri-db-a | None |
-| pri-db-c | None |
+| pri-db | None |
 
 ---
 
