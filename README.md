@@ -11,11 +11,10 @@ CloudFront (CDN)
   ↓              ↓
 S3 (Frontend)   ALB
                  ↓
-               EC2 × 2 (Backend, pri-svc)
+               EC2 × 2 (Backend, pub-svc)
                  ↓
                RDS MySQL (pri-db)
 
-* Bastion (pub-svc) → 프라이빗 EC2 SSH 접속용
 ```
 
 ## 기술 스택
