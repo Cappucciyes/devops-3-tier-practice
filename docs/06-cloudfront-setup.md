@@ -12,7 +12,11 @@
 
 CloudFront 콘솔 → Create distribution
 
+<img width="1587" height="1125" alt="image" src="https://github.com/user-attachments/assets/ce8e82ba-9286-4900-bf94-dfe657d89d2f" />
+
 Free-Tier 말고 Pay-as-you-go 선택
+
+<img width="2000" height="957" alt="image" src="https://github.com/user-attachments/assets/b3de5f1d-60a3-4041-bed7-7331c24390c8" />
 
 ### Origin 1: S3 (Frontend)
 
@@ -20,24 +24,24 @@ Free-Tier 말고 Pay-as-you-go 선택
 - 드롭다운에서 S3 버킷 선택
 - `guestbook-frontend-hojun121.s3.ap-northeast-2.amazonaws.com`
 
-**Origin access**
-- **Origin access control settings (recommended)** 선택
-- Create new OAC
-  - Name: `guestbook-frontend-oac`
-  - 기본값 사용
-- Create
+<img width="1672" height="1125" alt="image" src="https://github.com/user-attachments/assets/49355e71-d7eb-4bb7-bade-b262c29c8857" />
 
-⚠️ "S3 bucket policy needs updating" 알림 표시 → Step 2에서 처리
+**WAF 미사용**
+<img width="2000" height="455" alt="image" src="https://github.com/user-attachments/assets/38639d74-18cf-4d83-9780-4bede10b98b2" />
 
-### Default root object ⭐
+### CloudFront 생성 (Create distribution)
+- 배포까지 약 5~15분 소요.
+<img width="2000" height="997" alt="image" src="https://github.com/user-attachments/assets/09ff38a6-6118-4a80-ab39-99b6615ddddf" />
 
+
+### (중요) Default root object ⭐
+- 생성 이후 General 탭에서 Default root object 이름 변경
 - `index.html` 입력 (앞에 `/` 없이)
 - **필수.** 비워두면 루트(`/`) 접근 시 CloudFront가 객체를 못 찾아 S3가 AccessDenied 반환 → 방명록 화면이 안 뜸
 - S3 정적 호스팅을 끄고 OAC로만 접근하는 구조이므로, "루트 → index.html" 매핑은 S3가 아니라 **CloudFront의 이 설정**이 책임진다
 
-Create distribution.
+<img width="2000" height="1650" alt="image" src="https://github.com/user-attachments/assets/77d4ff73-a31f-49d7-8acd-09b1ef59ed05" />
 
-배포까지 약 5~15분 소요.
 
 ## Step 2. S3 버킷 정책 업데이트 (OAC 적용)
 
