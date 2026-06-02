@@ -45,26 +45,27 @@ devops-3-tier-practice/
 │   ├── package.json
 │   ├── init.sql
 │   ├── start.sh
-│   └── .env.example
+│   └── .env
 └── docs/
     ├── 01-vpc-subnet-setup.md
     ├── 02-backend-ec2-setup.md
     ├── 03-rds-setup.md
     ├── 04-alb-setup.md
     ├── 05-frontend-s3-setup.md
-    └── 06-cloudfront-setup.md
+    ├── 06-cloudfront-setup.md
+    └── cheat-vpc-cloudformation.yaml
 ```
 
 ## 실습 순서
 
 본 Repo의 docs 참고
 
-1. VPC 구축
-2. Backend EC2 2대 구축 (pri-svc)
+1. VPC 구축 (CloudFormation)
+2. Backend EC2 2대 구축 (pub-svc)
 3. RDS MySQL 구축 (pri-db)
 4. ALB 구축 및 연결 (pub-elb)
 5. Frontend S3 배포
-6. CloudFront 연결
+6. CloudFront 연결 (s3, alb)
 
 ## 주요 확인 포인트
 
