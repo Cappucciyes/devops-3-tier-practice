@@ -65,7 +65,6 @@ devops-3-tier-practice/
 4. ALB 구축 및 연결 (pub-elb)
 5. Frontend S3 배포
 6. CloudFront 연결
-7. 리소스 정리
 
 ## 주요 확인 포인트
 
@@ -76,3 +75,15 @@ devops-3-tier-practice/
 ### 장애 시뮬레이션
 - EC2 1대 중지 → ALB가 건강한 EC2로만 트래픽 전달
 - 서비스 지속 확인
+
+실습 끝나면 **반드시 전체 리소스 삭제**:
+
+## 삭제 순서 (역순):
+1. CloudFront Distribution (Disable → Delete)
+2. S3 버킷 (비우고 삭제)
+3. ALB
+4. Target Group
+5. RDS (스냅샷 없이)
+6. EC2 인스턴스 (모두)
+7. Elastic IP (해제)
+8. CloudFormation Stack 삭제

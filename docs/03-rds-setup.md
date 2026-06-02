@@ -103,35 +103,9 @@ mysql>
 
 backend EC2에는 `git clone`으로 받은 `init.sql`이 이미 있다 (`~/devops-3-tier-practice/backend/init.sql`).
 
-**방법 1. 파일로 한 번에 실행 (권장)**
-
 ```bash
 cd ~/devops-3-tier-practice/backend
 mysql -h <RDS_엔드포인트> -u admin -p < init.sql
-```
-
-**방법 2. MySQL 프롬프트에서 직접 실행**
-
-```sql
-CREATE DATABASE IF NOT EXISTS guestbook
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-USE guestbook;
-
-CREATE TABLE IF NOT EXISTS messages (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(100) NOT NULL,
-  content TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT INTO messages (name, content) VALUES
-  ('관리자', 'AWS 3-Tier 실습 환영!'),
-  ('테스터', '메시지를 작성하면 DB에 저장됩니다.');
-
-SELECT * FROM messages;
 ```
 
 ## Step 7. Backend EC2에서 연결 테스트
@@ -225,11 +199,3 @@ curl -X POST http://localhost:8080/api/messages \
 **`Unknown database 'guestbook'`**
 - init.sql 실행했는지 확인
 - `SHOW DATABASES;`로 존재 여부 확인
-
-## 비용 주의 ⚠️
-
-- RDS는 **생성 즉시 과금 시작**
-- 프리 티어라도 다중 인스턴스 띄우면 과금
-- 실습 끝나면 **반드시 삭제**:
-  - 스냅샷 유지 옵션 선택 여부 확인
-  - "최종 스냅샷 없이 삭제" 권장 (실습용)

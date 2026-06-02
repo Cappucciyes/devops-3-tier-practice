@@ -116,59 +116,6 @@ chmod +x start.sh
 
 스크립트가 Node.js, npm, MySQL client, PM2를 설치합니다.
 
-## Step 7. 환경변수 설정
-
-각 Backend EC2에서:
-
-```bash
-cd ~/devops-3-tier-practice/backend
-cp .env.example .env
-nano .env
-```
-
-`.env` 내용 수정 (RDS는 실습 3에서 만들 예정):
-
-```
-PORT=8080
-DB_HOST=<RDS_엔드포인트>
-DB_PORT=3306
-DB_USER=admin
-DB_PASSWORD=<RDS_암호>
-DB_NAME=guestbook
-```
-
-## Step 8. 앱 실행 (RDS 생성 후)
-
-```bash
-cd ~/devops-3-tier-practice/backend
-
-# PM2로 실행
-pm2 start server.js --name backend
-
-# 상태 확인
-pm2 status
-
-# 로그 확인
-pm2 logs backend
-
-# 시스템 재부팅 시 자동 시작
-pm2 startup
-pm2 save
-```
-
-## Step 9. 로컬 테스트 (EC2 내부)
-
-```bash
-# 헬스체크
-curl http://localhost:8080/api/health
-
-# 응답 예시
-# {"status":"ok","server":"ip-172-16-X-X","ip":"172.16.X.X",...}
-
-# DB 헬스체크 (RDS 연결 후)
-curl http://localhost:8080/api/health/db
-```
-
 ## 체크리스트
 
 - [ ] Backend EC2 2대 생성 (pub-svc-a, pub-svc-c)
@@ -178,4 +125,3 @@ curl http://localhost:8080/api/health/db
 - [ ] 로컬 → Backend SSH 접속 성공
 - [ ] `git clone` 완료
 - [ ] Node.js 설치 완료 (`./start.sh`)
-- [ ] `.env` 파일 생성 (RDS는 다음 실습에서)

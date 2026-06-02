@@ -12,6 +12,8 @@
 
 CloudFront 콘솔 → Create distribution
 
+Free-Tier 말고 Pay-as-you-go 선택
+
 ### Origin 1: S3 (Frontend)
 
 **Origin domain**
@@ -199,18 +201,3 @@ CloudFront (dxxx.cloudfront.net)
 ```
 
 축하합니다! 완전한 3-Tier 웹 아키텍처가 완성되었습니다.
-
-## 비용 정리 주의 ⚠️
-
-실습 끝나면 **반드시 전체 리소스 삭제**:
-
-**삭제 순서** (역순):
-1. CloudFront Distribution (Disable → Delete)
-2. S3 버킷 (비우고 삭제)
-3. ALB
-4. Target Group
-5. RDS (스냅샷 없이)
-6. EC2 인스턴스 (모두)
-7. NAT Gateway
-8. Elastic IP (해제)
-9. VPC (마지막)
