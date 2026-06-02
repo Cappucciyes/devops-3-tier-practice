@@ -48,7 +48,7 @@ devops-3-tier-practice/
 │   ├── start.sh
 │   └── .env.example
 └── docs/
-    ├── 01-bastion-setup.md
+    ├── 01-vpc-subnet-setup.md
     ├── 02-backend-ec2-setup.md
     ├── 03-rds-setup.md
     ├── 04-alb-setup.md
@@ -61,13 +61,12 @@ devops-3-tier-practice/
 본 Repo의 docs 참고
 
 1. VPC 구축
-2. Bastion 구축 (pub-svc)
-3. Backend EC2 2대 구축 (pri-svc)
-4. RDS MySQL 구축 (pri-db)
-5. ALB 구축 및 연결 (pub-elb)
-6. Frontend S3 배포
-7. CloudFront 연결
-8. 리소스 정리
+2. Backend EC2 2대 구축 (pri-svc)
+3. RDS MySQL 구축 (pri-db)
+4. ALB 구축 및 연결 (pub-elb)
+5. Frontend S3 배포
+6. CloudFront 연결
+7. 리소스 정리
 
 ## 주요 확인 포인트
 
@@ -78,16 +77,3 @@ devops-3-tier-practice/
 ### 장애 시뮬레이션
 - EC2 1대 중지 → ALB가 건강한 EC2로만 트래픽 전달
 - 서비스 지속 확인
-
-### DB 공유 확인
-- EC2 A에서 작성한 메시지 → EC2 B 응답에도 표시
-- 두 EC2가 같은 RDS 공유 확인
-
-## 비용 주의
-
-실습 후 반드시 정리할 리소스:
-- NAT Gateway (시간 + 트래픽 요금)
-- ALB (시간 요금)
-- RDS (시간 요금)
-- EC2 (시간 요금)
-- Elastic IP (미사용 시 과금)

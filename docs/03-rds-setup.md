@@ -3,7 +3,7 @@
 ## 목표
 
 - pri-db 서브넷에 RDS MySQL 생성
-- Bastion/Backend에서 접속 확인
+- Backend EC2에서 직접 접속 확인
 - 테이블 초기화
 
 ## Step 1. DB Subnet Group 생성
@@ -24,12 +24,17 @@ VPC: 실습 VPC
 
 | 타입 | 포트 | 소스 | 설명 |
 |---|---|---|---|
-| MySQL/Aurora | 3306 | `backend-sg` | Backend EC2에서 접근 |
-| MySQL/Aurora | 3306 | `bastion-sg` | Bastion에서 관리 접근 |
+| MySQL/Aurora | 3306 | `backend-sg` | Backend EC2에서만 접근 |
+
+⚠️ 소스는 `backend-sg`(보안 그룹) 자체를 지정. IP가 아니라 SG를 소스로 걸면 backend EC2가 늘어나도 규칙 수정이 필요 없다.
 
 ## Step 3. RDS 인스턴스 생성
 
 RDS 콘솔 → 데이터베이스 생성
+
+**생성 방식**
+- **표준 생성 (Standard create / 전체 구성)** 선택 ⭐
+- "손쉬운 생성(Easy create)"이 아니라 표준 생성을 써야 서브넷 그룹·SG·퍼블릭 액세스 등 네트워크 설정을 직접 지정할 수 있다. 실습 목적상 반드시 전체 구성으로 진행.
 
 **엔진 옵션**
 - 엔진: MySQL
@@ -41,7 +46,8 @@ RDS 콘솔 → 데이터베이스 생성
 **설정**
 - DB 인스턴스 식별자: `guestbook-db`
 - 마스터 사용자: `admin`
-- 마스터 암호: (안전하게 보관!)
+- 자격 증명 관리: 셀프 관리 (Self managed)
+- 마스터 암호: `devops123!` (실습용 — 운영에서는 절대 이런 약한 암호 금지)
 
 **인스턴스 구성**
 - `db.t3.micro` (프리 티어)
@@ -75,14 +81,9 @@ RDS 콘솔 → DB 인스턴스 → `guestbook-db` 클릭 → **엔드포인트**
 guestbook-db.xxxxxxxxxx.ap-northeast-2.rds.amazonaws.com
 ```
 
-## Step 5. Bastion에서 MySQL 접속
+## Step 5. Backend EC2에서 MySQL 접속
 
-Bastion 접속 후 MySQL 클라이언트 설치:
-
-```bash
-sudo apt update
-sudo apt install -y mysql-client
-```
+backend-a(또는 backend-c)에 SSH로 접속한다. MySQL 클라이언트는 실습 2의 `start.sh`에서 이미 설치됨. (없다면 `sudo apt install -y mysql-client`)
 
 RDS에 접속:
 
@@ -96,11 +97,20 @@ mysql -h <RDS_엔드포인트> -u admin -p
 mysql>
 ```
 
+> 📌 RDS는 퍼블릭 액세스 "아니오"라서 인터넷에서 직접 못 붙는다. 같은 VPC 안의 backend EC2에서, `rds-sg`가 `backend-sg`를 허용하고 있기 때문에 접속이 된다.
+
 ## Step 6. 데이터베이스 초기화
 
-Backend 디렉토리의 `init.sql` 실행:
+backend EC2에는 `git clone`으로 받은 `init.sql`이 이미 있다 (`~/devops-3-tier-practice/backend/init.sql`).
 
-**방법 1. MySQL 프롬프트에서 직접 실행**
+**방법 1. 파일로 한 번에 실행 (권장)**
+
+```bash
+cd ~/devops-3-tier-practice/backend
+mysql -h <RDS_엔드포인트> -u admin -p < init.sql
+```
+
+**방법 2. MySQL 프롬프트에서 직접 실행**
 
 ```sql
 CREATE DATABASE IF NOT EXISTS guestbook
@@ -124,24 +134,16 @@ INSERT INTO messages (name, content) VALUES
 SELECT * FROM messages;
 ```
 
-**방법 2. 파일로 실행**
-
-Bastion에 `init.sql` 업로드 후:
-
-```bash
-mysql -h <RDS_엔드포인트> -u admin -p < init.sql
-```
-
 ## Step 7. Backend EC2에서 연결 테스트
 
-Backend EC2 접속 후:
+backend-a, backend-c 각각:
 
 ```bash
 # MySQL client로 직접 접속 테스트
 mysql -h <RDS_엔드포인트> -u admin -p -e "SHOW DATABASES;"
 
 # .env 업데이트
-cd ~/backend
+cd ~/devops-3-tier-practice/backend
 nano .env
 ```
 
@@ -152,23 +154,23 @@ PORT=8080
 DB_HOST=guestbook-db.xxxxxxxxxx.ap-northeast-2.rds.amazonaws.com
 DB_PORT=3306
 DB_USER=admin
-DB_PASSWORD=<실제_암호>
+DB_PASSWORD=devops123!
 DB_NAME=guestbook
 ```
 
 ## Step 8. Backend 실행
 
 ```bash
-cd ~/backend
+cd ~/devops-3-tier-practice/backend
 pm2 start server.js --name backend
 pm2 logs backend
 ```
 
 로그에서 확인:
 ```
-Server starting: ip-192-168-50-X (192.168.50.X)
+Server starting: ip-172-16-X-X (172.16.X.X)
 DB connected successfully
-Backend server ip-192-168-50-X running on port 8080
+Backend server ip-172-16-X-X running on port 8080
 ```
 
 ## Step 9. API 테스트
@@ -198,8 +200,8 @@ curl -X POST http://localhost:8080/api/messages \
 
 - [ ] DB Subnet Group이 pri-db-a, pri-db-c에 걸쳐있음
 - [ ] RDS 퍼블릭 액세스 "아니오" 확인
-- [ ] RDS SG가 backend-sg, bastion-sg의 3306 허용
-- [ ] Bastion에서 RDS 접속 성공
+- [ ] rds-sg가 backend-sg의 3306 허용
+- [ ] Backend EC2에서 RDS 접속 성공
 - [ ] guestbook DB와 messages 테이블 생성 완료
 - [ ] Backend EC2 2대 모두에서 DB 연결 성공
 - [ ] API 테스트 모두 통과
@@ -207,9 +209,9 @@ curl -X POST http://localhost:8080/api/messages \
 ## 트러블슈팅
 
 **RDS 접속이 안 될 때**
-- RDS SG에 Source가 `bastion-sg`/`backend-sg`인지 확인
+- rds-sg 인바운드 Source가 `backend-sg`인지 확인
 - 포트 3306 열려 있는지
-- RDS와 EC2가 같은 VPC인지
+- RDS와 backend EC2가 같은 VPC인지
 
 **`Can't connect to MySQL server`**
 - 엔드포인트 주소 정확한지
