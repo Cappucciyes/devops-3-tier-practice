@@ -1,0 +1,503 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  AWS VPC Network Stack
+  - VPC (172.16.0.0/23)
+  - 14 Subnets (7 types x 2 AZs)
+  - IGW + 2 NAT Gateways (Zonal)
+  - 5 Route Tables (rt-public, rt-private-a/c, rt-db-a/c)
+
+# ============================================================
+# Parameters
+# ============================================================
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 172.16.0.0/23
+    Description: VPC CIDR block
+
+  AzA:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: ap-northeast-2a
+    Description: Availability Zone A
+
+  AzC:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: ap-northeast-2c
+    Description: Availability Zone C
+
+  ProjectName:
+    Type: String
+    Default: my
+    Description: Resource name prefix
+
+# ============================================================
+# Resources
+# ============================================================
+Resources:
+
+  # ----------------------------------------------------------
+  # VPC
+  # ----------------------------------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true       # DNS resolution
+      EnableDnsHostnames: true     # DNS hostnames
+      InstanceTenancy: default     # 가이드 명시: 변경 금지
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-vpc
+
+  # ----------------------------------------------------------
+  # Internet Gateway
+  # ----------------------------------------------------------
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-igw
+
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ==========================================================
+  # Subnets - Public (auto-assign public IPv4 enabled)
+  # ==========================================================
+
+  # pub-elb (외부 ALB/NLB)
+  PubElbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.0/27
+      AvailabilityZone: !Ref AzA
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-elb-a
+
+  PubElbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.32/27
+      AvailabilityZone: !Ref AzC
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-elb-c
+
+  # pub-nat (NAT Gateway 배치용)
+  PubNatA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.64/27
+      AvailabilityZone: !Ref AzA
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-nat-a
+
+  PubNatC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.96/27
+      AvailabilityZone: !Ref AzC
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-nat-c
+
+  # pub-svc (Bastion, 임시 자원)
+  PubSvcA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.128/27
+      AvailabilityZone: !Ref AzA
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-svc-a
+
+  PubSvcC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.160/27
+      AvailabilityZone: !Ref AzC
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: pub-svc-c
+
+  # ==========================================================
+  # Subnets - Private (no public IP)
+  # ==========================================================
+
+  # pri-elb (내부 ALB)
+  PriElbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.192/27
+      AvailabilityZone: !Ref AzA
+      Tags:
+        - Key: Name
+          Value: pri-elb-a
+
+  PriElbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.224/27
+      AvailabilityZone: !Ref AzC
+      Tags:
+        - Key: Name
+          Value: pri-elb-c
+
+  # pri-svc (애플리케이션 EC2)
+  PriSvcA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.0/27
+      AvailabilityZone: !Ref AzA
+      Tags:
+        - Key: Name
+          Value: pri-svc-a
+
+  PriSvcC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.32/27
+      AvailabilityZone: !Ref AzC
+      Tags:
+        - Key: Name
+          Value: pri-svc-c
+
+  # pri-db (RDS)
+  PriDbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.64/27
+      AvailabilityZone: !Ref AzA
+      Tags:
+        - Key: Name
+          Value: pri-db-a
+
+  PriDbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.96/27
+      AvailabilityZone: !Ref AzC
+      Tags:
+        - Key: Name
+          Value: pri-db-c
+
+  # pri-mgmt (CI/CD, 모니터링)
+  PriMgmtA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.128/27
+      AvailabilityZone: !Ref AzA
+      Tags:
+        - Key: Name
+          Value: pri-mgmt-a
+
+  PriMgmtC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.160/27
+      AvailabilityZone: !Ref AzC
+      Tags:
+        - Key: Name
+          Value: pri-mgmt-c
+
+  # ==========================================================
+  # NAT Gateways (Zonal - AZ당 1개)
+  # ==========================================================
+
+  EipNatA:
+    Type: AWS::EC2::EIP
+    DependsOn: IgwAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: eip-nat-a
+
+  EipNatC:
+    Type: AWS::EC2::EIP
+    DependsOn: IgwAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: eip-nat-c
+
+  NatA:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EipNatA.AllocationId
+      SubnetId: !Ref PubNatA
+      ConnectivityType: public
+      Tags:
+        - Key: Name
+          Value: nat-a
+
+  NatC:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EipNatC.AllocationId
+      SubnetId: !Ref PubNatC
+      ConnectivityType: public
+      Tags:
+        - Key: Name
+          Value: nat-c
+
+  # ==========================================================
+  # Route Tables
+  # ==========================================================
+
+  # ----- rt-public (모든 pub-* 서브넷) -----
+  RtPublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: rt-public
+
+  RtPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttachment
+    Properties:
+      RouteTableId: !Ref RtPublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # rt-public 서브넷 연결 (6개)
+  AssocPubElbA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubElbA
+
+  AssocPubElbC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubElbC
+
+  AssocPubNatA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubNatA
+
+  AssocPubNatC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubNatC
+
+  AssocPubSvcA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubSvcA
+
+  AssocPubSvcC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPublic
+      SubnetId: !Ref PubSvcC
+
+  # ----- rt-private-a (AZ-a NAT 경유) -----
+  RtPrivateA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: rt-private-a
+
+  RtPrivateADefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPrivateA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatA
+
+  AssocPriElbA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateA
+      SubnetId: !Ref PriElbA
+
+  AssocPriSvcA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateA
+      SubnetId: !Ref PriSvcA
+
+  AssocPriMgmtA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateA
+      SubnetId: !Ref PriMgmtA
+
+  # ----- rt-private-c (AZ-c NAT 경유) -----
+  RtPrivateC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: rt-private-c
+
+  RtPrivateCDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPrivateC
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatC
+
+  AssocPriElbC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateC
+      SubnetId: !Ref PriElbC
+
+  AssocPriSvcC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateC
+      SubnetId: !Ref PriSvcC
+
+  AssocPriMgmtC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtPrivateC
+      SubnetId: !Ref PriMgmtC
+
+  # ----- rt-db-a (외부 경로 없음) -----
+  RtDbA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: rt-db-a
+
+  AssocPriDbA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtDbA
+      SubnetId: !Ref PriDbA
+
+  # ----- rt-db-c (외부 경로 없음) -----
+  RtDbC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: rt-db-c
+
+  AssocPriDbC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RtDbC
+      SubnetId: !Ref PriDbC
+
+# ============================================================
+# Outputs - 다른 스택에서 ImportValue로 참조 가능
+# ============================================================
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+
+  VpcCidr:
+    Description: VPC CIDR
+    Value: !GetAtt Vpc.CidrBlock
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcCidr
+
+  # Public Subnets
+  PubElbASubnetId:
+    Value: !Ref PubElbA
+    Export:
+      Name: !Sub ${AWS::StackName}-PubElbA
+  PubElbCSubnetId:
+    Value: !Ref PubElbC
+    Export:
+      Name: !Sub ${AWS::StackName}-PubElbC
+  PubSvcASubnetId:
+    Value: !Ref PubSvcA
+    Export:
+      Name: !Sub ${AWS::StackName}-PubSvcA
+  PubSvcCSubnetId:
+    Value: !Ref PubSvcC
+    Export:
+      Name: !Sub ${AWS::StackName}-PubSvcC
+
+  # Private Subnets
+  PriElbASubnetId:
+    Value: !Ref PriElbA
+    Export:
+      Name: !Sub ${AWS::StackName}-PriElbA
+  PriElbCSubnetId:
+    Value: !Ref PriElbC
+    Export:
+      Name: !Sub ${AWS::StackName}-PriElbC
+  PriSvcASubnetId:
+    Value: !Ref PriSvcA
+    Export:
+      Name: !Sub ${AWS::StackName}-PriSvcA
+  PriSvcCSubnetId:
+    Value: !Ref PriSvcC
+    Export:
+      Name: !Sub ${AWS::StackName}-PriSvcC
+  PriDbASubnetId:
+    Value: !Ref PriDbA
+    Export:
+      Name: !Sub ${AWS::StackName}-PriDbA
+  PriDbCSubnetId:
+    Value: !Ref PriDbC
+    Export:
+      Name: !Sub ${AWS::StackName}-PriDbC
+  PriMgmtASubnetId:
+    Value: !Ref PriMgmtA
+    Export:
+      Name: !Sub ${AWS::StackName}-PriMgmtA
+  PriMgmtCSubnetId:
+    Value: !Ref PriMgmtC
+    Export:
+      Name: !Sub ${AWS::StackName}-PriMgmtC
+
+  # NAT Gateway EIPs (운영 시 확인용)
+  NatAEip:
+    Value: !Ref EipNatA
+    Export:
+      Name: !Sub ${AWS::StackName}-NatAEip
+  NatCEip:
+    Value: !Ref EipNatC
+    Export:
+      Name: !Sub ${AWS::StackName}-NatCEip
