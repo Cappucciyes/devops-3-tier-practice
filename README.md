@@ -2,6 +2,9 @@
 
 AWS 3-Tier 아키텍처 실습용 방명록 애플리케이션
 
+<img width="1263" height="538" alt="image" src="https://github.com/user-attachments/assets/1d7a61f2-9982-4af4-89d9-957ce8e80713" />
+
+
 ## 아키텍처
 
 ```
