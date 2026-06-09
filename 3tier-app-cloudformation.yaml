@@ -1,0 +1,682 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  devops-3-tier-practice - Full 3-Tier app (VPC + NAT x2 + ALB + EC2 x2 + RDS MySQL
+  + S3 + CloudFront/OAC). Frontend auto-uploaded via Lambda custom resource.
+  NOTE: SG 3개(alb/ec2/rds) 모두 in/out 0.0.0.0/0 전체개방 (사용자 요청, 실습 전용).
+
+# ============================================================ Parameters
+Parameters:
+  DBUsername:
+    Type: String
+    Default: admin
+    Description: RDS master username
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: devops123!
+    Description: RDS master password (실습 기본값, 운영 금지)
+  DBName:
+    Type: String
+    Default: guestbook
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+  KeyName:
+    Type: String
+    Default: ''
+    Description: (선택) EC2 SSH 키페어 이름. 비우면 키 없이 생성(SSM 접속 가능).
+  RepoUrl:
+    Type: String
+    Default: https://github.com/hojun121/devops-3-tier-practice.git
+  FrontendRawBase:
+    Type: String
+    Default: https://raw.githubusercontent.com/hojun121/devops-3-tier-practice/main/frontend/
+  InitSqlUrl:
+    Type: String
+    Default: https://raw.githubusercontent.com/hojun121/devops-3-tier-practice/main/backend/init.sql
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, '']]
+
+Resources:
+  # ========================================================== VPC / IGW
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.16.0.0/23
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: my-vpc }]
+
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: my-igw }]
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Igw
+
+  # ========================================================== Subnets (7종 x 2AZ)
+  PubElbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.0/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-elb-a }]
+  PubElbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.32/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-elb-c }]
+  PubNatA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.64/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-nat-a }]
+  PubNatC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.96/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-nat-c }]
+  PubSvcA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.128/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-svc-a }]
+  PubSvcC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.160/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: pub-svc-c }]
+  PriElbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.192/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-elb-a }]
+  PriElbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.0.224/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-elb-c }]
+  PriSvcA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.0/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-svc-a }]
+  PriSvcC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.32/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-svc-c }]
+  PriDbA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.64/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-db-a }]
+  PriDbC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.96/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-db-c }]
+  PriMgmtA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.128/27
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-mgmt-a }]
+  PriMgmtC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 172.16.1.160/27
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags: [{ Key: Name, Value: pri-mgmt-c }]
+
+  # ========================================================== NAT x2
+  NatEipA:
+    Type: AWS::EC2::EIP
+    Properties: { Domain: vpc }
+  NatEipC:
+    Type: AWS::EC2::EIP
+    Properties: { Domain: vpc }
+  NatA:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEipA.AllocationId
+      SubnetId: !Ref PubNatA
+      Tags: [{ Key: Name, Value: nat-a }]
+  NatC:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEipC.AllocationId
+      SubnetId: !Ref PubNatC
+      Tags: [{ Key: Name, Value: nat-c }]
+
+  # ========================================================== Route Tables
+  RtPublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: rt-public }]
+  RtPublicDefault:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties:
+      RouteTableId: !Ref RtPublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+  RtPrivateA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: rt-private-a }]
+  RtPrivateADefault:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPrivateA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatA
+  RtPrivateC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: rt-private-c }]
+  RtPrivateCDefault:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RtPrivateC
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatC
+  RtDb:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: rt-db }]
+
+  # ---- Public associations (pub-elb, pub-nat, pub-svc x2)
+  AssocPubElbA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubElbA, RouteTableId: !Ref RtPublic } }
+  AssocPubElbC: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubElbC, RouteTableId: !Ref RtPublic } }
+  AssocPubNatA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubNatA, RouteTableId: !Ref RtPublic } }
+  AssocPubNatC: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubNatC, RouteTableId: !Ref RtPublic } }
+  AssocPubSvcA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubSvcA, RouteTableId: !Ref RtPublic } }
+  AssocPubSvcC: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PubSvcC, RouteTableId: !Ref RtPublic } }
+  # ---- Private-a associations
+  AssocPriElbA:  { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriElbA,  RouteTableId: !Ref RtPrivateA } }
+  AssocPriSvcA:  { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriSvcA,  RouteTableId: !Ref RtPrivateA } }
+  AssocPriMgmtA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriMgmtA, RouteTableId: !Ref RtPrivateA } }
+  # ---- Private-c associations
+  AssocPriElbC:  { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriElbC,  RouteTableId: !Ref RtPrivateC } }
+  AssocPriSvcC:  { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriSvcC,  RouteTableId: !Ref RtPrivateC } }
+  AssocPriMgmtC: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriMgmtC, RouteTableId: !Ref RtPrivateC } }
+  # ---- DB associations
+  AssocPriDbA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriDbA, RouteTableId: !Ref RtDb } }
+  AssocPriDbC: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref PriDbC, RouteTableId: !Ref RtDb } }
+
+  # ========================================================== S3 Gateway Endpoint
+  # VPC 안 Lambda(DbInit)가 NAT 없이도 S3(cfnresponse presigned URL)에 응답을 보낼 수 있게 함
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref RtPrivateA, !Ref RtPrivateC]
+
+  # ========================================================== Security Groups (전체 개방)
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: alb-sg
+      GroupDescription: ALB SG - ALL open in/out (lab)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress: [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      SecurityGroupEgress:  [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      Tags: [{ Key: Name, Value: alb-sg }]
+  Ec2Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: backend-sg
+      GroupDescription: EC2 SG - ALL open in/out (lab)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress: [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      SecurityGroupEgress:  [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      Tags: [{ Key: Name, Value: backend-sg }]
+  RdsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: rds-sg
+      GroupDescription: RDS SG - ALL open in/out (lab)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress: [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      SecurityGroupEgress:  [{ IpProtocol: '-1', CidrIp: 0.0.0.0/0 }]
+      Tags: [{ Key: Name, Value: rds-sg }]
+
+  # ========================================================== RDS MySQL
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub 'guestbook-db-subnet-${AWS::StackName}'
+      DBSubnetGroupDescription: pri-db subnets
+      SubnetIds: [!Ref PriDbA, !Ref PriDbC]
+  RdsInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub 'guestbook-db-${AWS::StackName}'
+      Engine: mysql
+      EngineVersion: '8.0.42'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: '20'
+      StorageType: gp2
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref RdsSg]
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 0          # 자동 백업 끔 (최소 구성)
+      MonitoringInterval: 0             # 강화 모니터링(Enhanced Monitoring) 끔
+      EnablePerformanceInsights: false  # Performance Insights 끔
+      Tags: [{ Key: Name, Value: guestbook-db }]
+
+  # ========================================================== DB 스키마 초기화 (Lambda: RDS 이후 / EC2 이전)
+  DbInitRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # VPC ENI 생성 + CloudWatch Logs 권한 포함
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+  DbInitFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 600
+      MemorySize: 256
+      Role: !GetAtt DbInitRole.Arn
+      VpcConfig:
+        SubnetIds: [!Ref PriSvcA, !Ref PriSvcC]   # private: RDS 접근(VPC내) + PyPI(NAT) + S3(endpoint)
+        SecurityGroupIds: [!Ref Ec2Sg]
+      Code:
+        ZipFile: |
+          import json, urllib.request, sys, io, zipfile
+
+          # cfnresponse 의존 제거: 직접 presigned URL 로 PUT (S3 Gateway Endpoint 경유)
+          def send(event, ctx, status, reason=None):
+              body = json.dumps({
+                  'Status': status,
+                  'Reason': (reason or ('see log stream ' + ctx.log_stream_name))[:1000],
+                  'PhysicalResourceId': event.get('PhysicalResourceId') or ctx.log_stream_name,
+                  'StackId': event['StackId'], 'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'], 'Data': {},
+              }).encode()
+              req = urllib.request.Request(event['ResponseURL'], data=body, method='PUT',
+                  headers={'content-type': '', 'content-length': str(len(body))})
+              urllib.request.urlopen(req, timeout=30)
+
+          def handler(event, ctx):
+              try:
+                  if event['RequestType'] == 'Create':
+                      p = event['ResourceProperties']
+                      # 런타임에 PyPI에서 순수파이썬 pymysql 휠 받아 /tmp 에 설치
+                      meta = json.load(urllib.request.urlopen('https://pypi.org/pypi/PyMySQL/json', timeout=30))
+                      url = next(u['url'] for u in meta['urls'] if u['filename'].endswith('py3-none-any.whl'))
+                      zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(url, timeout=60).read())).extractall('/tmp/deps')
+                      sys.path.insert(0, '/tmp/deps')
+                      import pymysql
+                      from pymysql.constants import CLIENT
+                      sql = urllib.request.urlopen(p['InitSqlUrl'], timeout=30).read().decode('utf-8')
+                      conn = pymysql.connect(host=p['Host'], user=p['User'], password=p['Password'],
+                                             port=3306, connect_timeout=15,
+                                             client_flag=CLIENT.MULTI_STATEMENTS)
+                      cur = conn.cursor(); cur.execute(sql)
+                      while cur.nextset():
+                          pass
+                      conn.commit(); cur.close(); conn.close()
+                  # Update/Delete 는 멱등 위해 no-op
+                  send(event, ctx, 'SUCCESS')
+              except Exception as e:
+                  send(event, ctx, 'FAILED', str(e))
+  DbInit:
+    Type: AWS::CloudFormation::CustomResource
+    # NAT 경로/서브넷 연결이 끝난 뒤 실행되도록 보장 (Lambda 인터넷 접근)
+    DependsOn: [RtPrivateADefault, RtPrivateCDefault, AssocPriSvcA, AssocPriSvcC]
+    Properties:
+      ServiceToken: !GetAtt DbInitFn.Arn
+      Host: !GetAtt RdsInstance.Endpoint.Address
+      User: !Ref DBUsername
+      Password: !Ref DBPassword
+      DbName: !Ref DBName
+      InitSqlUrl: !Ref InitSqlUrl
+
+  # ========================================================== EC2 (IAM + 2대)
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  Ec2Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Ec2Role]
+
+  BackendA:
+    Type: AWS::EC2::Instance
+    DependsOn: DbInit          # 스키마 초기화 완료 후 기동
+    Properties:
+      ImageId: !Ref UbuntuAmi
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PubSvcA
+      SecurityGroupIds: [!Ref Ec2Sg]
+      IamInstanceProfile: !Ref Ec2Profile
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      Tags: [{ Key: Name, Value: backend-a }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -xe
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs git
+          npm install -g pm2
+          cd /home/ubuntu
+          git clone ${RepoUrl}
+          cd devops-3-tier-practice/backend
+          cat > .env <<EOF
+          PORT=8080
+          DB_HOST=${RdsInstance.Endpoint.Address}
+          DB_PORT=3306
+          DB_USER=${DBUsername}
+          DB_PASSWORD=${DBPassword}
+          DB_NAME=${DBName}
+          EOF
+          chown -R ubuntu:ubuntu /home/ubuntu/devops-3-tier-practice
+          sudo -iu ubuntu bash -c 'cd ~/devops-3-tier-practice/backend && npm install && pm2 start server.js --name backend && pm2 save'
+          pm2 startup systemd -u ubuntu --hp /home/ubuntu || true
+
+  BackendC:
+    Type: AWS::EC2::Instance
+    DependsOn: DbInit          # 스키마 초기화 완료 후 기동
+    Properties:
+      ImageId: !Ref UbuntuAmi
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PubSvcC
+      SecurityGroupIds: [!Ref Ec2Sg]
+      IamInstanceProfile: !Ref Ec2Profile
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref 'AWS::NoValue']
+      Tags: [{ Key: Name, Value: backend-c }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -xe
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs git
+          npm install -g pm2
+          cd /home/ubuntu
+          git clone ${RepoUrl}
+          cd devops-3-tier-practice/backend
+          cat > .env <<EOF
+          PORT=8080
+          DB_HOST=${RdsInstance.Endpoint.Address}
+          DB_PORT=3306
+          DB_USER=${DBUsername}
+          DB_PASSWORD=${DBPassword}
+          DB_NAME=${DBName}
+          EOF
+          chown -R ubuntu:ubuntu /home/ubuntu/devops-3-tier-practice
+          sudo -iu ubuntu bash -c 'cd ~/devops-3-tier-practice/backend && npm install && pm2 start server.js --name backend && pm2 save'
+          pm2 startup systemd -u ubuntu --hp /home/ubuntu || true
+
+  # ========================================================== ALB + TG
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub 'tg-${AWS::StackName}'
+      VpcId: !Ref Vpc
+      Protocol: HTTP
+      Port: 8080
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: { HttpCode: '200' }
+      Targets:
+        - { Id: !Ref BackendA, Port: 8080 }
+        - { Id: !Ref BackendC, Port: 8080 }
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub 'alb-${AWS::StackName}'
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups: [!Ref AlbSg]
+      Subnets: [!Ref PubElbA, !Ref PubElbC]
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ========================================================== S3 (Frontend)
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub 'guestbook-frontend-${AWS::AccountId}-${AWS::StackName}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ========================================================== CloudFront
+  Oac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: guestbook 3-tier
+        DefaultRootObject: index.html
+        Origins:
+          - Id: s3-frontend
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref Oac
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          - Id: alb-origin
+            DomainName: !GetAtt Alb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: s3-frontend
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: alb-origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # CachingDisabled
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3 # AllViewer
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        PriceClass: PriceClass_200
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  # ========================================================== Frontend 자동 업로드 (Lambda CR)
+  FrontendUploadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: s3-frontend-rw
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt FrontendBucket.Arn
+                  - !Sub '${FrontendBucket.Arn}/*'
+  FrontendUploadFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      Role: !GetAtt FrontendUploadRole.Arn
+      Code:
+        ZipFile: |
+          import json, urllib.request, boto3
+
+          FILES = {'index.html': 'text/html',
+                   'app.js': 'application/javascript',
+                   'style.css': 'text/css'}
+
+          # cfnresponse 의존 제거: presigned URL 로 직접 PUT (모듈 미첨부 문제 회피)
+          def send(event, ctx, status, reason=None):
+              body = json.dumps({
+                  'Status': status,
+                  'Reason': (reason or ('see log stream ' + ctx.log_stream_name))[:1000],
+                  'PhysicalResourceId': event.get('PhysicalResourceId') or ctx.log_stream_name,
+                  'StackId': event['StackId'], 'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'], 'Data': {},
+              }).encode()
+              req = urllib.request.Request(event['ResponseURL'], data=body, method='PUT',
+                  headers={'content-type': '', 'content-length': str(len(body))})
+              urllib.request.urlopen(req, timeout=30)
+
+          def handler(event, ctx):
+              try:
+                  s3 = boto3.client('s3')
+                  p = event['ResourceProperties']
+                  bucket = p['BucketName']; base = p['Base']
+                  rt = event['RequestType']
+                  if rt in ('Create', 'Update'):
+                      for f, ct in FILES.items():
+                          data = urllib.request.urlopen(base + f, timeout=30).read()
+                          s3.put_object(Bucket=bucket, Key=f, Body=data, ContentType=ct)
+                  elif rt == 'Delete':
+                      objs = s3.list_objects_v2(Bucket=bucket).get('Contents', [])
+                      if objs:
+                          s3.delete_objects(Bucket=bucket,
+                              Delete={'Objects': [{'Key': o['Key']} for o in objs]})
+                  send(event, ctx, 'SUCCESS')
+              except Exception as e:
+                  send(event, ctx, 'FAILED', str(e))
+  FrontendUpload:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt FrontendUploadFn.Arn
+      BucketName: !Ref FrontendBucket
+      Base: !Ref FrontendRawBase
+
+# ============================================================ Outputs
+Outputs:
+  CloudFrontURL:
+    Description: 최종 접속 URL (HTTPS)
+    Value: !Sub 'https://${Distribution.DomainName}'
+  AlbDNS:
+    Description: ALB DNS (직접 테스트용)
+    Value: !Sub 'http://${Alb.DNSName}'
+  RdsEndpoint:
+    Value: !GetAtt RdsInstance.Endpoint.Address
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
