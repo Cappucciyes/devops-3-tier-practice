@@ -52,7 +52,7 @@ Resources:
       CidrBlock: 172.16.0.0/23
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags: [{ Key: Name, Value: my-vpc }]
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-vpc' }]
 
   Igw:
     Type: AWS::EC2::InternetGateway
