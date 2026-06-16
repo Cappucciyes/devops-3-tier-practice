@@ -64,22 +64,9 @@ backend-cicd/
 
 > 이 시점에는 사이트의 `/api/*` 요청이 잠시 503으로 응답합니다. 타겟 그룹이 비어 있기 때문이며, 정상적인 상태입니다. 7단계(ASG)와 10단계(첫 배포)를 마치면 다시 정상으로 돌아옵니다.
 
-### 다음 단계에서 쓸 값
-
-이후 콘솔 작업에 필요한 값들은 스택의 **Outputs 탭**에 정리되어 있습니다. 미리 봐 두면 편합니다.
-
-| Output | 어디에 쓰나 |
-|---|---|
-| `RdsEndpoint` | 서버 환경변수(`.env`)의 `DB_HOST` |
-| `VpcId` | ASG · Launch Template 생성 |
-| `BackendSubnets` | ASG에 넣을 서브넷 (`pub-svc-a`, `pub-svc-c`) |
-| `BackendSgId` | Launch Template 보안 그룹 (`backend-sg`) |
-| `TargetGroupName` | ASG · CodeDeploy에 연결할 타겟 그룹 |
-| `CloudFrontURL` | 마지막에 접속해서 확인할 주소 |
-
 ---
 
-## 3. 전체 그림 이해하기
+## 3. Blueprint Overview
 
 본격적으로 만들기 전에, 무엇을 만드는지 한 번 짚고 갑니다.
 
@@ -115,7 +102,7 @@ CodeDeploy (Blue/Green)
 
 핵심은 **새 버전을 별도 서버(Green)에 먼저 띄워 검증한 뒤 트래픽을 넘긴다**는 점입니다. 검증에 실패하면 기존 서버(Blue)가 그대로 서비스를 이어가므로 안전합니다.
 
-### 미리 알아두면 좋은 파일들
+### CodeDeploy 파이프라인을 구성하는 파일들
 
 **`backend/appspec.yml`** — CodeDeploy에게 "코드를 어디에 풀고(`/home/ubuntu/backend`), 어떤 순서로 스크립트를 실행할지" 알려주는 명세서입니다. 실행 순서는 다음과 같습니다.
 
@@ -351,27 +338,54 @@ chown -R ubuntu:ubuntu /home/ubuntu/backend
 1. Outputs의 **`CloudFrontURL`** 로 접속하면 방명록 페이지가 뜹니다.
 2. 메시지를 남기고 새로고침했을 때 그대로 보이면 DB 저장이 정상입니다.
 3. 새로고침을 반복했을 때 응답의 `server` 값(서버 이름)이 번갈아 바뀌면 로드밸런싱이 잘 동작하는 것입니다.
-4. 코드를 조금 바꿔 다시 push하면, 무중단으로 새 버전이 반영되는 과정을 볼 수 있습니다.
+4. **직접 바꿔서 다시 배포해 보기**
+   `backend/server.js` 의 `/api/health` 응답에 버전 표시 한 줄을 추가합니다.
+
+   ```js
+   app.get('/api/health', (req, res) => {
+     res.status(200).json({
+       status: 'ok',
+       version: 'v2',        // ← 이 줄 추가
+       server: SERVER_ID,
+       ip: SERVER_IP,
+       timestamp: new Date().toISOString(),
+     });
+   });
+   ```
+
+   저장 후 `backend-cicd` 브랜치에 push하면 파이프라인이 다시 돕니다. 배포가 끝난 뒤 브라우저에서 `https://<CloudFrontURL>/api/health` 에 접속하면 응답에 `version` 이 새로 나타납니다.
+   - 배포 전: `{"status":"ok","server":...}`
+   - 배포 후: `{"status":"ok","version":"v2","server":...}`
+
+   이 `version` 필드가 새로 보이면 바꾼 코드가 CI/CD로 배포된 것입니다. Blue/Green으로 전환되는 동안에도 사이트는 끊김 없이 계속 동작합니다.
 
 ---
 
 ## 실습 후 정리
 
-다 끝났으면 비용이 나가지 않도록 리소스를 정리합니다. NAT Gateway 2개, RDS, ALB, CloudFront, EC2 모두 과금 대상입니다.
+비용이 계속 나가지 않도록, 실습이 끝나면 만든 리소스를 아래 순서대로 삭제합니다. (NAT Gateway 2개, RDS, ALB, CloudFront, EC2가 모두 과금 대상입니다.)
 
-순서: CodeDeploy 배포로 생긴 ASG → Launch Template → CodeDeploy 애플리케이션 → S3 아티팩트 버킷 → 마지막으로 CloudFormation 스택 삭제.
+콘솔에서 직접 만든 리소스를 먼저 지우고, **CloudFormation 스택을 가장 마지막에** 삭제하는 것이 핵심입니다. 순서가 꼬이면 스택 삭제가 실패하거나 리소스가 남을 수 있습니다.
 
-> CodeDeploy가 Blue/Green 과정에서 만든 ASG(`CodeDeploy_backend-asg_...`)는 CloudFormation 바깥에서 생긴 리소스라, 스택을 지워도 남을 수 있습니다. 그 ASG와 서버를 먼저 직접 정리하세요.
+1. **Auto Scaling Group 삭제**
+   EC2 → Auto Scaling Groups 에서 `backend-asg` 와, CodeDeploy가 배포 과정에서 만든 `CodeDeploy_backend-asg_...` 를 **모두** 삭제합니다. ASG를 지우면 그 안의 서버(EC2)도 함께 종료됩니다.
 
----
+2. **Launch Template 삭제**
+   EC2 → Launch Templates 에서 `backend-lt` 를 삭제합니다.
 
-## 막히면 — 자주 겪는 문제
+3. **CodeDeploy 삭제**
+   CodeDeploy → Applications 에서 `guestbook-backend` 를 삭제합니다. 배포 그룹 `guestbook-backend-dg` 도 함께 사라집니다.
 
-| 증상 | 확인할 곳 |
-|---|---|
-| 배포가 `AfterInstall` 에서 실패 | 서버에 `/home/ubuntu/backend/.env` 가 있는지 (Launch Template User data 확인) |
-| CodeDeploy가 서버를 못 찾음 | CodeDeploy 에이전트 상태 — `systemctl status codedeploy-agent` |
-| 배포 파일 다운로드 권한 오류 | 서버 역할에 `AmazonEC2RoleforAWSCodeDeploy` 가 붙었는지 |
-| GitHub Actions 인증 실패 | OIDC 역할 Trust의 저장소·브랜치(`sub`) 값이 맞는지 |
-| 서버가 계속 새로 떴다 지워짐 | ASG 헬스체크가 ELB로 돼 있음 → **EC2 로 변경** |
-| `/api/*` 가 계속 503 | 타겟 그룹에 정상 서버가 없음 → 첫 배포 완료 여부 확인 |
+4. **S3 아티팩트 버킷 삭제**
+   S3 에서 `guestbook-artifacts-...` 버킷을 **Empty(비우기)** 한 뒤 **Delete** 합니다. 버킷은 비어 있어야 삭제됩니다.
+
+5. **IAM 정리**
+   IAM → Roles 에서 `backend-ec2-role`, `codedeploy-service-role`, `github-actions-backend-role` 을 삭제하고, IAM → Identity providers 에서 GitHub OIDC 공급자를 삭제합니다.
+
+6. **(선택) GitHub 변수 삭제**
+   저장소 Settings → Secrets and variables → Actions → Variables 에서 등록했던 5개 변수를 삭제합니다.
+
+7. **CloudFormation 스택 삭제**
+   마지막으로 스택을 **Delete** 하면 VPC · NAT · RDS · ALB · 프론트엔드 S3 · CloudFront 등 나머지 인프라가 한 번에 제거됩니다.
+
+> ⚠️ 7번(스택 삭제)을 먼저 하지 마세요. ASG 서버가 스택의 타겟 그룹에 붙어 있는 상태에서 스택을 지우면 삭제가 막히거나 리소스가 남을 수 있습니다. 콘솔에서 직접 만든 1~5번을 먼저 정리해야 합니다.
