@@ -221,6 +221,7 @@ GitHub Actions가 비밀 키 없이 AWS에 접근하도록 OIDC 방식으로 연
 4. 생성 이후  `github-actions-backend-role` 검색하여 **Permissions** 중 인라인 Policy 추가합니다. 
 <img width="2000" height="1044" alt="image" src="https://github.com/user-attachments/assets/83946cc0-d432-4b6a-8352-3ceddb62583f" />
 <img width="1698" height="891" alt="image" src="https://github.com/user-attachments/assets/b0713fe5-3b95-4df7-aa8a-f72e9ed34d7e" />
+
 아래 JSON을 복사한 후 <ARTIFACT_BUCKET>, <ACCOUNT_ID> 부분을 실제 값으로 치환!
 ```json
 {
@@ -356,15 +357,17 @@ chown -R ubuntu:ubuntu /home/ubuntu/backend
 ## 9. GitHub 저장소 변수 등록
 
 저장소 **Settings → Secrets and variables → Actions → Variables** 탭에서 아래 5개를 등록합니다.
-<img width="2000" height="1043" alt="image" src="https://github.com/user-attachments/assets/5c60e2b2-3a30-4770-a275-e2c52a43c240" />
 
 | 변수명 | 값 |
 |---|---|
 | `AWS_REGION` | `ap-northeast-2` |
-| `AWS_BACKEND_ROLE_ARN` | 5-3에서 만든 Role ARN |
+| `AWS_BACKEND_ROLE_ARN` | 5-3에서 만든 Role ARN  |
 | `ARTIFACT_BUCKET` | 4단계 버킷 이름 |
 | `CD_APP_NAME` | `guestbook-backend` |
 | `CD_DG_NAME` | `guestbook-backend-dg` |
+
+5-3에서 만든 Role ARN => `github-actions-backend-role` 역할 ARN
+<img width="2000" height="1043" alt="image" src="https://github.com/user-attachments/assets/5c60e2b2-3a30-4770-a275-e2c52a43c240" />
 
 ---
 
