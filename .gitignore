@@ -8,6 +8,8 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
+# 단, 실습용 backend/.env(placeholder)는 예외로 추적 — 실제 .env는 LT userdata가 생성
+!backend/.env
 
 # 키 파일 절대 커밋 금지!
 *.pem
@@ -30,3 +32,6 @@ logs/
 
 # PM2
 .pm2/
+
+# oh-my-claudecode 런타임 상태 (도구 부산물)
+.omc/

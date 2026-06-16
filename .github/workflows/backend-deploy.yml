@@ -26,17 +26,14 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Package backend
+        working-directory: backend
         run: |
-          zip -r ${{ env.ARTIFACT_KEY }} . \
-            -x "frontend/*" \
-            -x "docs/*" \
-            -x ".github/*" \
-            -x ".git/*" \
-            -x "node_modules/*" \
+          # backend/ 안에서 묶어 appspec.yml 이 번들 최상단에 오게 함 (CodeDeploy 필수)
+          # .env 는 제외 — 실제 .env 는 인스턴스의 Launch Template userdata 가 생성
+          zip -r ../${{ env.ARTIFACT_KEY }} . \
             -x ".env" \
-            -x "*.log" \
-            -x "README.md" \
-            -x ".gitignore"
+            -x "node_modules/*" \
+            -x "*.log"
 
       - name: Upload artifact to S3
         run: |
