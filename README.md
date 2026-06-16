@@ -1,21 +1,20 @@
-# Backend CI/CD 실습 (backend-cicd 브랜치)
+# 백엔드 CI/CD 구축 실습 (Blue/Green)
 
-이 브랜치는 **백엔드 EC2 계층을 Auto Scaling Group + CodeDeploy(Blue/Green) 기반 CI/CD로 직접 구성**하는 실습용입니다.
-네트워크 / RDS / ALB / S3 / CloudFront 같은 나머지 인프라는 이미 CloudFormation으로 떠 있는 상태에서, **EC2 계층만** 콘솔에서 손으로 만들어 봅니다.
+이 실습에서는 백엔드 서버를 **Auto Scaling Group + CodeDeploy(Blue/Green)** 기반의 자동 배포 파이프라인으로 직접 구성해 봅니다.
 
-> **GitHub Actions → S3 → CodeDeploy(Blue/Green) → Auto Scaling Group** 파이프라인을 완성하는 것이 목표입니다.
+네트워크 · RDS · ALB · S3 · CloudFront 등 기본 인프라는 CloudFormation으로 이미 올라가 있습니다. 여기서는 그 위에 **백엔드 배포 자동화**를 얹어, 코드를 push하면 무중단으로 새 버전이 배포되는 흐름을 완성하는 것이 목표입니다.
 
----
+```
+git push  →  GitHub Actions  →  S3  →  CodeDeploy(Blue/Green)  →  Auto Scaling Group
+```
 
-## 사전 조건
-
-- **강사가 `cloudformation` 브랜치 템플릿으로 스택을 이미 배포**해 둔 상태 (`CREATE_COMPLETE`)
-- 리전: **서울(ap-northeast-2)**
-- 본인이 이 저장소(`devops-3-tier-practice`)에 push 권한이 있고, `backend-cicd` 브랜치를 사용
+> 진행 환경: AWS 리전 **서울(ap-northeast-2)**, 콘솔 기준.
 
 ---
 
-## Step 1 — 브랜치 체크아웃 & 구조 확인
+## 1. 시작하기 — 브랜치 받기
+
+먼저 작업 브랜치를 받습니다.
 
 ```bash
 git fetch origin
@@ -23,22 +22,22 @@ git checkout backend-cicd
 ls -A
 ```
 
-이 브랜치의 구조는 다음과 같습니다. (자세한 설명은 Step 3)
+폴더 구조는 다음과 같습니다.
 
 ```
 backend-cicd/
-├── 3tier-app-cloudformation-no-ec2.yaml   # 정적 EC2를 뺀 인프라 템플릿 (Step 2에서 사용)
-├── README.md                              # 이 가이드
+├── 3tier-app-cloudformation-no-ec2.yaml   # 인프라 템플릿 (2단계에서 사용)
+├── README.md                              # 이 문서
 ├── .github/
 │   └── workflows/
 │       └── backend-deploy.yml             # GitHub Actions 파이프라인
-└── backend/                               # 배포 대상 백엔드 애플리케이션
-    ├── server.js                          # Express 앱 (방명록 API)
+└── backend/                               # 배포되는 백엔드 애플리케이션
+    ├── server.js                          # Express 방명록 API
     ├── package.json / package-lock.json
-    ├── init.sql                           # DB 스키마 (참고용, 실제 초기화는 CF가 수행)
-    ├── .env                               # 환경변수 placeholder (실제 값은 인스턴스가 생성)
+    ├── init.sql                           # DB 스키마 (참고용)
+    ├── .env                               # 환경변수 예시 (실제 값은 서버가 직접 생성)
     ├── appspec.yml                        # CodeDeploy 배포 명세
-    └── scripts/                           # CodeDeploy 생명주기 훅 스크립트
+    └── scripts/                           # 배포 단계별 실행 스크립트
         ├── before_install.sh
         ├── after_install.sh
         ├── application_start.sh
@@ -48,155 +47,158 @@ backend-cicd/
 
 ---
 
-## Step 2 — CloudFormation 업데이트 배포 (정적 EC2 제거)
+## 2. 인프라에서 정적 EC2 걷어내기
 
-강사가 배포한 스택에는 **정적 EC2 2대(`backend-a`, `backend-c`)** 가 떠 있습니다.
-CI/CD 실습을 위해, 이 EC2를 **`3tier-app-cloudformation-no-ec2.yaml` 로 스택을 업데이트**해서 제거합니다.
+현재 인프라에는 백엔드용 EC2 2대(`backend-a`, `backend-c`)가 고정으로 떠 있습니다. 이건 부팅할 때 코드를 한 번 받아오는 단순한 구조라, CI/CD로 전환하려면 먼저 이 EC2를 걷어내야 합니다.
 
-이 템플릿은 원본에서 다음을 뺀 버전입니다.
-- 정적 EC2 `BackendA` / `BackendC`
-- EC2용 IAM `Ec2Role` / `Ec2Profile`
-- TargetGroup에 하드코딩돼 있던 정적 타겟(`Targets`)
+이를 위해 **`3tier-app-cloudformation-no-ec2.yaml`** 로 기존 스택을 업데이트합니다. 이 템플릿은 정적 EC2와 그 IAM 역할, 그리고 타겟 그룹에 고정돼 있던 대상을 빼둔 버전입니다. 비워진 EC2 자리는 이후 단계에서 Auto Scaling Group과 CodeDeploy로 채웁니다.
 
-> 즉 **"EC2 계층만 비워서, 그 자리를 학생이 ASG+CodeDeploy로 채우게"** 만든 템플릿입니다.
-
-### 콘솔 절차
+### 진행
 
 1. **CloudFormation → 기존 스택 선택 → Update**
-2. *Prepare template* = **Replace existing template**
-3. *Template source* = **Upload a template file** → `3tier-app-cloudformation-no-ec2.yaml` 첨부 → **Next**
-4. 파라미터는 기존 값 그대로 → **Next** → **Next**
-5. IAM 동의 체크박스 ☑ → **Submit**
-6. `UPDATE_COMPLETE` 확인 → **EC2 콘솔에서 `backend-a`/`backend-c`가 사라졌는지 확인**
+2. *Prepare template* → **Replace existing template**
+3. *Template source* → **Upload a template file** → `3tier-app-cloudformation-no-ec2.yaml` 선택 → **Next**
+4. 파라미터는 그대로 두고 **Next → Next**
+5. IAM 리소스 생성 동의 체크박스 ☑ → **Submit**
+6. `UPDATE_COMPLETE` 가 되면, EC2 콘솔에서 `backend-a` · `backend-c` 가 사라졌는지 확인합니다.
 
-> ⚠️ **이 시점부터 `/api/*` 요청은 503입니다 (정상).** TargetGroup이 비었기 때문이며, Step 7(ASG) + Step 10(첫 배포) 이후 healthy로 복구됩니다.
+> 이 시점에는 사이트의 `/api/*` 요청이 잠시 503으로 응답합니다. 타겟 그룹이 비어 있기 때문이며, 정상적인 상태입니다. 7단계(ASG)와 10단계(첫 배포)를 마치면 다시 정상으로 돌아옵니다.
 
-### 이후 단계에서 쓸 값 — 스택 **Outputs 탭**에서 확인
+### 다음 단계에서 쓸 값
 
-| Output 키 | 용도 |
+이후 콘솔 작업에 필요한 값들은 스택의 **Outputs 탭**에 정리되어 있습니다. 미리 봐 두면 편합니다.
+
+| Output | 어디에 쓰나 |
 |---|---|
-| `RdsEndpoint` | Launch Template `.env`의 `DB_HOST` |
-| `VpcId` | ASG / Launch Template 생성 |
-| `BackendSubnets` | ASG에 지정할 서브넷 (`pub-svc-a,pub-svc-c`) |
-| `BackendSgId` | Launch Template 보안그룹 (`backend-sg`) |
-| `TargetGroupName` | ASG / CodeDeploy에 연결할 ALB 타겟그룹 |
-| `CloudFrontURL` | 최종 검증 접속 주소 |
+| `RdsEndpoint` | 서버 환경변수(`.env`)의 `DB_HOST` |
+| `VpcId` | ASG · Launch Template 생성 |
+| `BackendSubnets` | ASG에 넣을 서브넷 (`pub-svc-a`, `pub-svc-c`) |
+| `BackendSgId` | Launch Template 보안 그룹 (`backend-sg`) |
+| `TargetGroupName` | ASG · CodeDeploy에 연결할 타겟 그룹 |
+| `CloudFrontURL` | 마지막에 접속해서 확인할 주소 |
 
 ---
 
-## Step 3 — 전체 청사진
+## 3. 전체 그림 이해하기
 
-### 3-1. 아키텍처
+본격적으로 만들기 전에, 무엇을 만드는지 한 번 짚고 갑니다.
+
+### 아키텍처
 
 ```
 사용자 → CloudFront (HTTPS)
-   ├ Default(*) → S3 (프론트, OAC 보호)
-   └ /api/*    → ALB(:80) → TargetGroup → [ASG 백엔드 EC2(:8080)] → RDS MySQL(:3306)
+   ├ 일반 요청(*) → S3 (정적 프론트엔드)
+   └ /api/*       → ALB(:80) → 타겟 그룹 → 백엔드 EC2(:8080) → RDS MySQL(:3306)
                                               ▲
-                                     이 부분을 학생이 만든다
+                                  이번 실습에서 만드는 부분
 ```
 
-### 3-2. CI/CD 흐름 (Blue/Green)
+### 배포가 일어나는 순서 (Blue/Green)
 
 ```
-git push (backend-cicd)
+코드 push (backend-cicd 브랜치)
    │
    ▼
-GitHub Actions (backend-deploy.yml)
-   │  1) backend/ 를 zip 으로 패키징 (appspec.yml 이 최상단)
-   │  2) S3 아티팩트 버킷에 업로드
-   │  3) CodeDeploy 배포 생성(create-deployment)
+GitHub Actions
+   │  ① backend/ 폴더를 zip으로 묶음
+   │  ② S3 버킷에 업로드
+   │  ③ CodeDeploy에 배포 요청
    ▼
 CodeDeploy (Blue/Green)
-   │  · 현재 ASG(Blue)를 복제해 새 ASG(Green) 생성
-   │  · Green 인스턴스에 번들 배포 → 훅 실행 → /api/health 검증
-   │  · 검증 통과 시 ALB 트래픽을 Green 으로 전환
-   │  · Blue(구버전) 인스턴스 종료
+   │  · 지금 돌고 있는 그룹(Blue)을 복제해 새 그룹(Green)을 만든다
+   │  · Green에 새 코드를 올리고 헬스체크(/api/health)로 정상 확인
+   │  · 정상이면 트래픽을 Green으로 넘긴다
+   │  · 기존 Blue는 종료한다
    ▼
 무중단 배포 완료
 ```
 
-**Blue/Green 핵심**: 새 버전을 **별도 인스턴스(Green)** 에 먼저 띄우고 헬스체크가 통과해야 트래픽을 넘깁니다. 실패하면 기존(Blue)이 그대로 서비스 → 무중단/안전 롤백.
+핵심은 **새 버전을 별도 서버(Green)에 먼저 띄워 검증한 뒤 트래픽을 넘긴다**는 점입니다. 검증에 실패하면 기존 서버(Blue)가 그대로 서비스를 이어가므로 안전합니다.
 
-### 3-3. 폴더 구조 & 역할
+### 미리 알아두면 좋은 파일들
 
-- **`3tier-app-cloudformation-no-ec2.yaml`** — Step 2에서 스택 업데이트에 쓰는, EC2를 뺀 인프라 템플릿.
-- **`backend/`** — 실제로 배포되는 애플리케이션. GitHub Actions가 **이 디렉토리만** zip으로 묶어 CodeDeploy에 넘깁니다.
-- **`.github/workflows/backend-deploy.yml`** — CI/CD 파이프라인 정의.
-
-### 3-4. 핵심 파일 간단 설명
-
-**`backend/appspec.yml`** — CodeDeploy에게 *"번들을 어디에 풀고(`/home/ubuntu/backend`), 어떤 순서로 훅을 실행할지"* 알려주는 명세서입니다. 훅 실행 순서:
+**`backend/appspec.yml`** — CodeDeploy에게 "코드를 어디에 풀고(`/home/ubuntu/backend`), 어떤 순서로 스크립트를 실행할지" 알려주는 명세서입니다. 실행 순서는 다음과 같습니다.
 
 ```
 ApplicationStop → BeforeInstall → (파일 복사) → AfterInstall → ApplicationStart → ValidateService
 ```
 
-**`backend/scripts/`** — 위 각 훅에서 실행되는 스크립트입니다.
+**`backend/scripts/`** — 위 각 단계에서 실행되는 스크립트입니다.
 
-| 스크립트 | 훅 | 하는 일 |
+| 스크립트 | 단계 | 하는 일 |
 |---|---|---|
-| `application_stop.sh` | ApplicationStop | 기존 pm2 프로세스 종료 (없으면 무시) |
-| `before_install.sh` | BeforeInstall | 배포 디렉토리 준비 |
-| `after_install.sh` | AfterInstall | `.env` 존재 확인 후 `npm ci`(프로덕션 의존성 설치) |
-| `application_start.sh` | ApplicationStart | `pm2 start/reload` 로 서버 기동 |
-| `validate_service.sh` | ValidateService | `/api/health` 헬스체크 (앱 정상 기동 확인) |
+| `application_stop.sh` | ApplicationStop | 돌고 있던 서버 종료 (없으면 그냥 넘어감) |
+| `before_install.sh` | BeforeInstall | 배포할 폴더 준비 |
+| `after_install.sh` | AfterInstall | `.env` 확인 후 의존성 설치(`npm ci`) |
+| `application_start.sh` | ApplicationStart | pm2로 서버 기동 |
+| `validate_service.sh` | ValidateService | `/api/health` 로 정상 기동 확인 |
 
-**`.github/workflows/backend-deploy.yml`** — `backend-cicd` 브랜치에 push되면 실행됩니다. OIDC로 AWS 인증 → `backend/`를 zip 패키징(appspec.yml이 zip 최상단에 오도록) → S3 업로드 → `aws deploy create-deployment` 호출 → 배포 완료까지 대기.
+**`.github/workflows/backend-deploy.yml`** — `backend-cicd` 브랜치에 push하면 자동으로 도는 파이프라인입니다. AWS 인증(OIDC) → `backend/` 압축 → S3 업로드 → CodeDeploy 배포 요청 → 완료 대기 순으로 동작합니다.
 
-### 3-5. 학생이 콘솔에서 만들 것 (체크리스트)
+### 앞으로 만들 것
 
-- [ ] **S3** 아티팩트 버킷 (Step 4)
-- [ ] **IAM** 3종: EC2 인스턴스 롤 / CodeDeploy 서비스 롤 / GitHub OIDC 롤 (Step 5)
-- [ ] **Launch Template** (Step 6)
-- [ ] **Auto Scaling Group** (Step 7)
-- [ ] **CodeDeploy** Application + Deployment Group (Step 8)
-- [ ] **GitHub** repo Variables (Step 9)
+다음 순서로 하나씩 만들어 갑니다.
+
+- [ ] **S3** 배포 아티팩트 버킷 (4단계)
+- [ ] **IAM** 역할 3개 (5단계)
+- [ ] **Launch Template** (6단계)
+- [ ] **Auto Scaling Group** (7단계)
+- [ ] **CodeDeploy** 애플리케이션 + 배포 그룹 (8단계)
+- [ ] **GitHub** 저장소 변수 (9단계)
 
 ---
 
-## Step 4 — S3 아티팩트 버킷
+## 4. S3 아티팩트 버킷 만들기
 
-CodeDeploy 번들(zip)을 보관할 버킷입니다.
+CodeDeploy가 가져갈 배포 파일(zip)을 보관할 버킷입니다.
 
 1. **S3 → Create bucket**
-2. 이름: 전역 고유 (예: `guestbook-artifacts-<본인계정ID>`)
+2. 이름: 전 세계에서 겹치지 않게 (예: `guestbook-artifacts-<본인계정ID>`)
 3. 리전: **ap-northeast-2**
-4. *Block all public access* **유지(체크됨)** → **Create**
-5. 버킷 이름을 메모 → 나중에 GitHub 변수 `ARTIFACT_BUCKET`
+4. *Block all public access* 는 **체크된 채로 그대로** → **Create**
+
+만든 버킷 이름은 메모해 둡니다. 나중에 GitHub 변수 `ARTIFACT_BUCKET` 에 넣습니다.
 
 ---
 
-## Step 5 — IAM 3종
+## 5. IAM 역할 3개 만들기
 
-### 5-1. EC2 인스턴스 롤 (백엔드 인스턴스용)
+### 5-1. 백엔드 서버용 역할
+
+서버(EC2)에 붙는 역할입니다.
 
 1. **IAM → Roles → Create role**
 2. Trusted entity: **AWS service → EC2**
-3. 정책 2개 연결:
-   - `AmazonSSMManagedInstanceCore` (SSM 접속)
-   - `AmazonEC2RoleforAWSCodeDeploy` (CodeDeploy agent가 S3에서 번들 다운로드)
-4. 이름: `backend-ec2-role` → 생성 (동명의 인스턴스 프로파일이 자동 생성됨)
+3. 정책 2개 연결
+   - `AmazonSSMManagedInstanceCore` — SSM으로 서버 접속
+   - `AmazonEC2RoleforAWSCodeDeploy` — CodeDeploy가 S3에서 배포 파일을 받을 수 있게 함
+4. 이름: `backend-ec2-role` → 생성
 
-### 5-2. CodeDeploy 서비스 롤
+### 5-2. CodeDeploy용 역할
+
+CodeDeploy가 ASG와 로드밸런서를 다룰 수 있게 해주는 역할입니다.
 
 1. **IAM → Roles → Create role**
-2. Trusted entity: **AWS service → CodeDeploy → CodeDeploy** (use case)
-3. 정책: `AWSCodeDeployRole` (자동 선택됨)
+2. Trusted entity: **AWS service → CodeDeploy → CodeDeploy**
+3. 정책 `AWSCodeDeployRole` 이 자동으로 붙습니다.
 4. 이름: `codedeploy-service-role` → 생성
 
-### 5-3. GitHub OIDC 공급자 + 롤
+### 5-3. GitHub Actions용 역할
 
-**(a) OIDC 공급자 등록**
+GitHub Actions가 비밀 키 없이 AWS에 접근하도록 OIDC 방식으로 연결합니다.
+
+**먼저 OIDC 공급자를 등록합니다.**
+
 1. **IAM → Identity providers → Add provider**
 2. Provider type: **OpenID Connect**
 3. Provider URL: `https://token.actions.githubusercontent.com` → **Get thumbprint**
 4. Audience: `sts.amazonaws.com` → **Add provider**
 
-**(b) 롤 생성**
+**이어서 역할을 만듭니다.**
+
 1. **IAM → Roles → Create role → Web identity**
 2. Identity provider: 방금 만든 GitHub OIDC, Audience: `sts.amazonaws.com`
-3. 생성 후 **Trust relationship**를 아래로 편집 (`<OWNER>/<REPO>`는 본인 저장소로):
+3. 생성 후 **Trust relationship** 을 아래처럼 편집합니다. (`<OWNER>/<REPO>` 는 본인 저장소로)
 
 ```json
 {
@@ -210,7 +212,7 @@ CodeDeploy 번들(zip)을 보관할 버킷입니다.
 }
 ```
 
-4. **Permissions**에 아래 인라인 정책 추가 (`<ARTIFACT_BUCKET>` 치환):
+4. **Permissions** 에 아래 정책을 인라인으로 추가합니다. (`<ARTIFACT_BUCKET>` 치환)
 
 ```json
 {
@@ -226,23 +228,23 @@ CodeDeploy 번들(zip)을 보관할 버킷입니다.
 }
 ```
 
-5. 이름: `github-actions-backend-role` → 생성 후 **롤 ARN 메모** → GitHub 변수 `AWS_BACKEND_ROLE_ARN`
+5. 이름: `github-actions-backend-role` → 생성 후 **역할 ARN** 을 메모합니다. (GitHub 변수 `AWS_BACKEND_ROLE_ARN`)
 
 ---
 
-## Step 6 — Launch Template
+## 6. Launch Template 만들기
 
-ASG가 인스턴스를 찍어낼 틀입니다. userdata는 **앱을 받지 않고**, node/pm2/**CodeDeploy agent** 설치 + `.env` 생성까지만 합니다. 실제 앱은 CodeDeploy가 넣습니다.
+Auto Scaling Group이 서버를 찍어낼 때 쓰는 틀입니다. 부팅 시 Node.js·pm2·CodeDeploy 에이전트를 설치하고 `.env` 파일만 만들어 둡니다. 실제 애플리케이션 코드는 CodeDeploy가 배포하므로 여기서 받지 않습니다.
 
 1. **EC2 → Launch Templates → Create launch template**
 2. 이름: `backend-lt`
 3. AMI: **Ubuntu Server 22.04 LTS** (x86_64)
 4. Instance type: `t3.micro`
 5. Key pair: 없음 (SSM으로 접속)
-6. Network settings → **Security groups**: `backend-sg` 선택 (Step 2 Output `BackendSgId`)
-   - ⚠️ 서브넷은 **여기서 지정하지 말 것** (ASG가 지정)
+6. Network settings → **Security groups**: `backend-sg` 선택 (Outputs의 `BackendSgId`)
+   - 서브넷은 여기서 지정하지 않습니다. ASG가 정합니다.
 7. Advanced details → **IAM instance profile**: `backend-ec2-role`
-8. Advanced details → **User data**에 아래 입력 (`<RDS_ENDPOINT>`를 Step 2 Output `RdsEndpoint`로 치환):
+8. Advanced details → **User data** 에 아래 내용을 입력합니다. (`<RDS_ENDPOINT>` 는 Outputs의 `RdsEndpoint` 값으로 치환)
 
 ```bash
 #!/bin/bash
@@ -255,7 +257,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs ruby-full wget
 npm install -g pm2
 
-# CodeDeploy agent (서울 리전)
+# CodeDeploy 에이전트 (서울 리전)
 cd /home/ubuntu
 wget -q https://aws-codedeploy-ap-northeast-2.s3.ap-northeast-2.amazonaws.com/latest/install
 chmod +x ./install
@@ -263,7 +265,7 @@ chmod +x ./install
 systemctl enable codedeploy-agent
 systemctl start codedeploy-agent
 
-# 앱 디렉토리 + .env (CodeDeploy 가 코드를 여기에 배포)
+# 앱 폴더 + .env (CodeDeploy가 여기로 코드를 배포)
 mkdir -p /home/ubuntu/backend
 cat > /home/ubuntu/backend/.env <<EOF
 PORT=8080
@@ -280,89 +282,96 @@ chown -R ubuntu:ubuntu /home/ubuntu/backend
 
 ---
 
-## Step 7 — Auto Scaling Group
+## 7. Auto Scaling Group 만들기
 
 1. **EC2 → Auto Scaling Groups → Create**
 2. 이름: `backend-asg`, Launch template: `backend-lt` → Next
-3. Network: VPC(`VpcId`), 서브넷 **`pub-svc-a`, `pub-svc-c`** (Output `BackendSubnets`) → Next
-4. **Load balancing**: *Attach to an existing load balancer* → *Choose from your load balancer target groups* → **`tg-<스택명>`** (Output `TargetGroupName`)
-5. **Health checks**: **EC2** 선택 (⚠️ 이유는 아래), grace period `300`
+3. Network: VPC(`VpcId`), 서브넷 **`pub-svc-a`, `pub-svc-c`** (`BackendSubnets`) → Next
+4. **Load balancing**: *Attach to an existing load balancer* → *Choose from your load balancer target groups* → **`tg-...`** (`TargetGroupName`)
+5. **Health checks**: **EC2** 선택, grace period `300`
 6. Group size: Desired `2`, Min `2`, Max `4` → 생성
 
-> ⚠️ **Health check를 ELB가 아니라 EC2로 두는 이유**: 첫 배포 전에는 인스턴스에 앱이 없어 `/api/health`가 실패합니다. ELB health check면 ASG가 "비정상"으로 보고 인스턴스를 계속 재생성(churn)합니다. EC2 health check면 "인스턴스가 살아있음"만 보므로 첫 배포 전까지 안정적입니다. (Blue/Green 전환 자체는 CodeDeploy가 타겟그룹 헬스로 판단하므로 무관)
+> 헬스체크를 ELB가 아닌 **EC2** 로 두는 이유가 있습니다. 첫 배포 전에는 서버에 아직 앱이 없어 `/api/health` 가 실패하는데, ELB 헬스체크로 두면 ASG가 이를 "고장"으로 보고 서버를 계속 새로 띄웠다 지웠다 반복합니다. EC2 헬스체크는 "서버가 켜져 있는지"만 보므로, 첫 배포 전까지 안정적입니다. (Blue/Green 전환 자체는 CodeDeploy가 타겟 그룹 상태로 판단하므로 영향받지 않습니다.)
 
-생성 후 인스턴스 2대가 뜨고 userdata가 실행됩니다. 이 시점엔 앱이 없어 TargetGroup에서 **unhealthy**로 보이는 게 정상입니다.
+서버 2대가 뜨고 위 User data 가 실행됩니다. 아직 앱이 없어서 타겟 그룹에는 unhealthy로 보이는데, 첫 배포 전까지는 정상입니다.
 
 ---
 
-## Step 8 — CodeDeploy Application + Deployment Group (Blue/Green)
+## 8. CodeDeploy 만들기 (Blue/Green)
 
 1. **CodeDeploy → Applications → Create application**
    - 이름: `guestbook-backend`, Compute platform: **EC2/On-premises** → 생성
 2. **Create deployment group**
    - 이름: `guestbook-backend-dg`
-   - Service role: `codedeploy-service-role` (Step 5-2)
+   - Service role: `codedeploy-service-role` (5-2)
    - Deployment type: **Blue/green**
    - Environment configuration: **Automatically copy Amazon EC2 Auto Scaling group** → `backend-asg`
-   - Load balancer: **Enable** → Application Load Balancer → Target group: **`tg-<스택명>`**
-   - Deployment settings:
+   - Load balancer: **Enable** → Application Load Balancer → Target group: **`tg-...`**
+   - Deployment settings
      - *Traffic rerouting*: **Reroute traffic immediately**
-     - *Original instances*: **Terminate the original instances ... (예: 0~5분 후)**
+     - *Original instances*: 기존 서버를 일정 시간 뒤 종료 (예: 0~5분)
      - Deployment configuration: `CodeDeployDefault.AllAtOnce`
-   - → **Create deployment group**
-3. 이름 메모: `guestbook-backend`(=`CD_APP_NAME`), `guestbook-backend-dg`(=`CD_DG_NAME`)
+   - **Create deployment group**
+
+애플리케이션 이름(`guestbook-backend`)과 배포 그룹 이름(`guestbook-backend-dg`)을 메모해 둡니다.
 
 ---
 
-## Step 9 — GitHub repo Variables
+## 9. GitHub 저장소 변수 등록
 
-저장소 **Settings → Secrets and variables → Actions → Variables** 탭 → 아래 5개 등록:
+저장소 **Settings → Secrets and variables → Actions → Variables** 탭에서 아래 5개를 등록합니다.
 
 | 변수명 | 값 |
 |---|---|
 | `AWS_REGION` | `ap-northeast-2` |
-| `AWS_BACKEND_ROLE_ARN` | Step 5-3 OIDC 롤 ARN |
-| `ARTIFACT_BUCKET` | Step 4 버킷 이름 |
+| `AWS_BACKEND_ROLE_ARN` | 5-3에서 만든 역할 ARN |
+| `ARTIFACT_BUCKET` | 4단계 버킷 이름 |
 | `CD_APP_NAME` | `guestbook-backend` |
 | `CD_DG_NAME` | `guestbook-backend-dg` |
 
 ---
 
-## Step 10 — 첫 배포
+## 10. 첫 배포
 
-방법 A: `backend-cicd` 브랜치에 커밋 push
-방법 B: **GitHub → Actions → Backend Deploy → Run workflow** (수동 트리거)
+두 가지 방법 중 하나로 파이프라인을 실행합니다.
 
-- **GitHub Actions** 탭에서 진행 확인: Package → Upload → Trigger CodeDeploy → Wait
-- **CodeDeploy 콘솔**에서 Blue/Green 진행 확인: Green ASG 생성 → 배포 → 트래픽 전환 → Blue 종료
-- **EC2 → Target Groups → `tg-...`** 가 **healthy** 로 바뀌는지 확인
+- `backend-cicd` 브랜치에 커밋을 push, 또는
+- **GitHub → Actions → Backend Deploy → Run workflow** (수동 실행)
 
----
+진행 상황은 이렇게 따라가며 확인합니다.
 
-## Step 11 — 검증
-
-1. Step 2 Output **`CloudFrontURL`** 접속 → 방명록 페이지 로드
-2. 메시지 작성 → 새로고침 후 유지되면 **RDS 저장 정상**
-3. 새로고침 반복 시 응답의 `server` 값(호스트명)이 바뀌면 **로드밸런싱 정상**
-4. (선택) CodeDeploy에서 한 번 더 배포 → 무중단으로 새 버전 반영되는지 확인
+- **GitHub Actions** 탭: 압축 → 업로드 → 배포 요청 → 완료 대기
+- **CodeDeploy 콘솔**: Green 그룹 생성 → 배포 → 트래픽 전환 → Blue 종료
+- **EC2 → Target Groups**: `tg-...` 가 **healthy** 로 바뀌는지 확인
 
 ---
 
-## 정리 / 주의
+## 11. 확인하기
 
-- 실습 후 **반드시 삭제**: CodeDeploy로 생성된 ASG → Launch Template → CodeDeploy App → S3 아티팩트 버킷 → 마지막에 CloudFormation 스택 삭제
-- 비용 주의: NAT Gateway×2, RDS, ALB, CloudFront, EC2가 과금됩니다.
-- ⚠️ CodeDeploy Blue/Green이 만든 ASG(`CodeDeploy_backend-asg_...`)는 스택 외부 리소스라 **CloudFormation 삭제만으로 안 지워질 수 있습니다.** ASG/인스턴스를 먼저 수동 정리하세요.
+1. Outputs의 **`CloudFrontURL`** 로 접속하면 방명록 페이지가 뜹니다.
+2. 메시지를 남기고 새로고침했을 때 그대로 보이면 DB 저장이 정상입니다.
+3. 새로고침을 반복했을 때 응답의 `server` 값(서버 이름)이 번갈아 바뀌면 로드밸런싱이 잘 동작하는 것입니다.
+4. 코드를 조금 바꿔 다시 push하면, 무중단으로 새 버전이 반영되는 과정을 볼 수 있습니다.
 
 ---
 
-## 트러블슈팅
+## 실습 후 정리
 
-| 증상 | 원인 / 확인 |
+다 끝났으면 비용이 나가지 않도록 리소스를 정리합니다. NAT Gateway 2개, RDS, ALB, CloudFront, EC2 모두 과금 대상입니다.
+
+순서: CodeDeploy 배포로 생긴 ASG → Launch Template → CodeDeploy 애플리케이션 → S3 아티팩트 버킷 → 마지막으로 CloudFormation 스택 삭제.
+
+> CodeDeploy가 Blue/Green 과정에서 만든 ASG(`CodeDeploy_backend-asg_...`)는 CloudFormation 바깥에서 생긴 리소스라, 스택을 지워도 남을 수 있습니다. 그 ASG와 서버를 먼저 직접 정리하세요.
+
+---
+
+## 막히면 — 자주 겪는 문제
+
+| 증상 | 확인할 곳 |
 |---|---|
-| 배포가 `AfterInstall`에서 실패 | 인스턴스 `/home/ubuntu/backend/.env` 없음 → Launch Template userdata 확인 |
-| CodeDeploy가 인스턴스를 못 찾음 | codedeploy-agent 미설치/미실행 → userdata, `systemctl status codedeploy-agent` |
-| 번들 다운로드 권한 오류 | EC2 롤에 `AmazonEC2RoleforAWSCodeDeploy` 누락 |
-| GitHub Actions 인증 실패 | OIDC 롤 trust의 `sub`(브랜치/repo) 불일치 |
-| ASG 인스턴스가 계속 교체됨 | ASG health check가 ELB로 설정됨 → **EC2로 변경** |
-| `/api/*` 가 계속 503 | TargetGroup에 healthy 타겟 없음 → 첫 배포 완료/헬스 확인 |
+| 배포가 `AfterInstall` 에서 실패 | 서버에 `/home/ubuntu/backend/.env` 가 있는지 (Launch Template User data 확인) |
+| CodeDeploy가 서버를 못 찾음 | CodeDeploy 에이전트 상태 — `systemctl status codedeploy-agent` |
+| 배포 파일 다운로드 권한 오류 | 서버 역할에 `AmazonEC2RoleforAWSCodeDeploy` 가 붙었는지 |
+| GitHub Actions 인증 실패 | OIDC 역할 Trust의 저장소·브랜치(`sub`) 값이 맞는지 |
+| 서버가 계속 새로 떴다 지워짐 | ASG 헬스체크가 ELB로 돼 있음 → **EC2 로 변경** |
+| `/api/*` 가 계속 503 | 타겟 그룹에 정상 서버가 없음 → 첫 배포 완료 여부 확인 |
