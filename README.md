@@ -163,12 +163,33 @@ CodeDeploy가 가져갈 배포 파일(zip)을 보관할 버킷입니다.
 
 ### 5-2. CodeDeploy용 역할
 
-CodeDeploy가 ASG와 로드밸런서를 다룰 수 있게 해주는 역할입니다.
+CodeDeploy가 ASG와 로드밸런서를 다루고, Blue/Green 배포 때 **새로 띄우는 서버(Green)에 위 `backend-ec2-role` 을 붙일 수 있게** 해주는 역할입니다.
 
 1. **IAM → Roles → Create role**
 2. Trusted entity: **AWS service → CodeDeploy → CodeDeploy**
-3. 정책 `AWSCodeDeployRole` 이 자동으로 붙습니다.
+   - `CodeDeploy - ECS` 나 `CodeDeploy - Lambda` 가 아닌 **CodeDeploy** 를 고릅니다.
+3. `AWSCodeDeployRole` 이 자동으로 붙습니다. 여기에 `AmazonEC2FullAccess` 도 검색해 **추가로 체크**합니다.
 4. 이름: `codedeploy-service-role` → 생성
+5. 생성된 역할에서 **Add permissions → Create inline policy → JSON** 으로 아래를 추가합니다. (`<ACCOUNT_ID>` 치환)
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": "iam:PassRole",
+         "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/backend-ec2-role"
+       }
+     ]
+   }
+   ```
+
+   정책 이름: `AllowPassBackendEc2Role` → **Create policy**
+
+> ⚠️ 5번(PassRole)을 빼먹으면 **첫 배포의 첫 단계(새 서버 provisioning)** 에서 다음 오류로 멈춥니다.
+> `The IAM role does not give you permission to perform operations in the following AWS service: AmazonAutoScaling`
+> Blue/Green이 새로 띄우는 서버에 `backend-ec2-role` 을 붙이려면, CodeDeploy에게 "그 역할을 넘겨줘도 된다"는 `iam:PassRole` 권한이 필요합니다. `AWSCodeDeployRole` 에는 이 권한이 없어서 별도로 추가합니다.
 
 ### 5-3. GitHub Actions용 역할
 
@@ -225,10 +246,12 @@ Auto Scaling Group이 서버를 찍어낼 때 쓰는 틀입니다. 부팅 시 No
 
 1. **EC2 → Launch Templates → Create launch template**
 2. 이름: `backend-lt`
-3. AMI: **Ubuntu Server 22.04 LTS** (x86_64)
+3. AMI: **Ubuntu Server 24.04 LTS** (x86_64)
 4. Instance type: `t3.micro`
 5. Key pair: 없음 (SSM으로 접속)
-6. Network settings → **Security groups**: `backend-sg` 선택 (Outputs의 `BackendSgId`)
+6. Network settings
+   - **Auto-assign public IP**: **Enable** — 이 실습에서는 EC2를 퍼블릭 서브넷(`pub-svc`)에 두고, **인터넷 게이트웨이로 직접 아웃바운드**(Node.js · CodeDeploy 에이전트 · npm 다운로드)합니다. NAT 대신 인스턴스의 퍼블릭 IP로 나가는 구조입니다. (항목이 안 보이면 *Advanced network configuration* 을 펼치면 있습니다.)
+   - **Security groups**: `backend-sg` 선택 (Outputs의 `BackendSgId`)
    - 서브넷은 여기서 지정하지 않습니다. ASG가 정합니다.
 7. Advanced details → **IAM instance profile**: `backend-ec2-role`
 8. Advanced details → **User data** 에 아래 내용을 입력합니다. (`<RDS_ENDPOINT>` 는 Outputs의 `RdsEndpoint` 값으로 치환)
